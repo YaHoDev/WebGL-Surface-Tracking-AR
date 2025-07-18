@@ -11,14 +11,16 @@
     <div id="unity-container" class="unity-desktop">
       <canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
       <div id="unity-loading-bar">
+        <div id="unity-logo"></div>
         <div id="unity-progress-bar-empty">
           <div id="unity-progress-bar-full"></div>
         </div>
       </div>
       <div id="unity-warning"> </div>
       <div id="unity-footer">
+        <div id="unity-logo-title-footer"></div>
         <div id="unity-fullscreen-button"></div>
-        <div id="unity-build-title"></div>
+        <div id="unity-build-title">WEB-3D-Tour-Shapozhnikova</div>
       </div>
     </div>
     <script>
@@ -50,12 +52,12 @@
       }
 
       var buildUrl = "Build";
-      var loaderUrl = buildUrl + "/Location_One_full_content.loader.js";
+      var loaderUrl = buildUrl + "/After_validator_fix.loader.js";
       var config = {
         arguments: [],
-        dataUrl: buildUrl + "/Location_One_full_content.data",
-        frameworkUrl: buildUrl + "/Location_One_full_content.framework.js",
-        codeUrl: buildUrl + "/Location_One_full_content.wasm",
+        dataUrl: buildUrl + "/After_validator_fix.data",
+        frameworkUrl: buildUrl + "/After_validator_fix.framework.js",
+        codeUrl: buildUrl + "/After_validator_fix.wasm",
         streamingAssetsUrl: "StreamingAssets",
         companyName: "ADVIN",
         productName: "WEB-3D-Tour-Shapozhnikova",
