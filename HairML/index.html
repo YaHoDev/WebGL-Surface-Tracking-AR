@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MediaPipe Hair Color Change (WebCam)</title>
+  <style>
+    :root { --bg:#0f1115; --panel:#171a21; --text:#e8eaed; --muted:#9aa0a6; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, Arial, sans-serif; background:var(--bg); color:var(--text); }
+    header { padding:16px 20px; border-bottom:1px solid #23262e; background:var(--panel); position:sticky; top:0; z-index:10;}
+    h1 { font-size:18px; margin:0; }
+    main { display:grid; grid-template-columns: 320px 1fr; gap:16px; padding:16px; }
+    @media (max-width: 900px){ main{ grid-template-columns:1fr; } }
+    .card { background:var(--panel); border:1px solid #23262e; border-radius:12px; overflow:hidden; }
+    .card h2 { font-size:14px; letter-spacing:.02em; text-transform:uppercase; color:var(--muted); margin:0; padding:12px 14px; border-bottom:1px solid #23262e;}
+    .controls { padding:14px; display:grid; gap:12px; }
+    .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    label { font-size:13px; color:var(--muted); min-width:120px; }
+    input[type="range"] { width:100%; }
+    input[type="color"] { width:44px; height:32px; border:none; background:transparent; padding:0; }
+    select { background:#11151b; color:var(--text); border:1px solid #2a2e36; padding:8px 10px; border-radius:8px; }
+    button { appearance:none; border:none; background:#2563eb; color:white; padding:10px 14px; border-radius:10px; font-weight:600; cursor:pointer; }
+    button.secondary { background:#2d3748; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    .video-wrap { position:relative; }
+    canvas, video { width:100%; height:auto; display:block; border-bottom-left-radius:12px; border-bottom-right-radius:12px; }
+    video { display:none; } /* приховано, малюємо на canvas */
+    .bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .swatch { width:24px; height:24px; border-radius:50%; border:1px solid #0003; cursor:pointer; display:inline-block; }
+    .muted { color:var(--muted); font-size:12px; }
+    .footer { padding:10px 14px; border-top:1px solid #23262e; font-size:12px; color:var(--muted); display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;}
+    .badge { font-size:11px; border:1px solid #2a2e36; padding:4px 8px; border-radius:999px; background:#0c0f14; }
+  </style>
+</head>
+<body>
+  <header><h1>MediaPipe Hair Color Change (реальний час)</h1></header>
+
+  <main>
+    <section class="card">
+      <h2>Налаштування</h2>
+      <div class="controls">
+        <div class="row">
+          <label for="color">Колір волосся</label>
+          <input id="color" type="color" value="#b000ff" />
+          <div class="bar" id="presets" aria-label="Швидкі пресети"></div>
+        </div>
+        <div class="row">
+          <label for="strength">Інтенсивність</label>
+          <input id="strength" type="range" min="0" max="1" step="0.01" value="0.85" />
+          <span id="strengthVal" class="muted">0.85</span>
+        </div>
+        <div class="row">
+          <label for="blur">Згладження країв</label>
+          <input id="blur" type="range" min="0" max="12" step="1" value="4" />
+          <span id="blurVal" class="muted">4 px</span>
+        </div>
+        <div class="row">
+          <label for="blend">Режим змішування</label>
+          <select id="blend">
+            <option value="color" selected>color (реалістично)</option>
+            <option value="soft-light">soft-light</option>
+            <option value="overlay">overlay</option>
+            <option value="multiply">multiply</option>
+            <option value="hue">hue</option>
+            <option value="saturation">saturation</option>
+            <option value="luminosity">luminosity</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>Камера</label>
+          <button id="toggleCam">Увімкнути камеру</button>
+          <button id="flip" class="secondary" title="Дзеркальне відображення">Дзеркалити</button>
+        </div>
+        <div class="muted">Порада: тримайся ≲ 1.5 м від камери і рівномірне освітлення — так маска працює краще. Модель сегментує волосся однієї людини у кадрі.</div>
+      </div>
+      <div class="footer">
+        <span class="badge" id="fps">FPS: —</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Попередній перегляд</h2>
+      <div class="video-wrap">
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="stage"></canvas>
+      </div>
+      <div class="footer">
+        <span id="status" class="muted">Готово до запуску…</span>
+        <button id="snapshot" class="secondary" disabled>Зберегти кадр</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- JS -->
+  <script type="module">
+    // MediaPipe Tasks Vision (браузер, ESM)
+    import { ImageSegmenter, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.2";
+
+    // ===== DOM
+    const video = document.querySelector('#webcam');
+    const canvas = document.querySelector('#stage');
+    const ctx = canvas.getContext('2d', { willReadFrequently: false });
+    const btn = document.querySelector('#toggleCam');
+    const flipBtn = document.querySelector('#flip');
+    const colorInput = document.querySelector('#color');
+    const blendSelect = document.querySelector('#blend');
+    const strengthInput = document.querySelector('#strength');
+    const blurInput = document.querySelector('#blur');
+    const strengthVal = document.querySelector('#strengthVal');
+    const blurVal = document.querySelector('#blurVal');
+    const presetsBar = document.querySelector('#presets');
+    const statusEl = document.querySelector('#status');
+    const fpsBadge = document.querySelector('#fps');
+    const snapshotBtn = document.querySelector('#snapshot');
+
+    // ===== Швидкі пресети кольорів
+    const PRESETS = ["#ff004c","#ff7a00","#ffd400","#33cc66","#00c2ff","#3b82f6","#b000ff","#ff66cc","#6b4f1d","#000000"];
+    PRESETS.forEach(hex => {
+      const d = document.createElement('button');
+      d.className = 'swatch';
+      d.style.background = hex;
+      d.title = hex;
+      d.type = 'button';
+      d.addEventListener('click', () => { colorInput.value = hex; });
+      presetsBar.appendChild(d);
+    });
+
+    // ===== Стан
+    let stream = null;
+    let mirrored = true;
+    let running = false;
+    let segmenter = null;
+    let lastT = performance.now();
+    let frames = 0;
+
+    // Маска/тінт offscreen
+    let maskCanvas = document.createElement('canvas');
+    let maskCtx = maskCanvas.getContext('2d');
+    let tintCanvas = document.createElement('canvas');
+    let tintCtx = tintCanvas.getContext('2d');
+
+    // ===== Утиліти
+    const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+    const hexToRGB = (hex) => {
+      const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+      return m ? { r: parseInt(m[1],16), g: parseInt(m[2],16), b: parseInt(m[3],16) } : { r:176, g:0, b:255 };
+    };
+
+    function setStatus(txt){ statusEl.textContent = txt; }
+
+    function resizeCanvases(w, h){
+      [canvas, maskCanvas, tintCanvas].forEach(c => { c.width = w; c.height = h; });
+    }
+
+    // ===== Шляхи моделей (офіційний CDN MediaPipe Models)
+    // Джерело: Models -> HairSegmenter (float32) у документації Image Segmenter. 
+    // https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter/index (див. Models) 
+    const MODEL_CANDIDATES = [
+      "https://storage.googleapis.com/mediapipe-models/image_segmenter/hair_segmenter/float32/latest/hair_segmenter.tflite",
+      "https://storage.googleapis.com/mediapipe-models/image_segmenter/hair_segmenter/float32/1/hair_segmenter.tflite",
+      "https://storage.googleapis.com/mediapipe-models/image_segmenter/hair_segmenter/float32/1/hair_segmenter.task",
+      // На випадок, якщо ти залиєш модель локально/CDN:
+      // "./models/hair_segmenter.tflite",
+      // "./models/hair_segmenter.task",
+    ];
+
+    // Підготовка ImageSegmenter (Hair)
+    async function initSegmenter(){
+      setStatus('Завантаження моделей…');
+
+      // wasm з CDN як у гайді Web JS
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.2/wasm"
+      );
+
+      let created = null;
+      let lastErr = null;
+
+      for (const url of MODEL_CANDIDATES){
+        try {
+          created = await ImageSegmenter.createFromOptions(vision, {
+            baseOptions: { modelAssetPath: url },
+            runningMode: "VIDEO",
+            outputCategoryMask: true,
+            outputConfidenceMasks: false
+          });
+          console.log('[HairSegmenter] loaded from', url);
+          break;
+        } catch(err){
+          console.warn('Не вдалося завантажити модель з', url, err);
+          lastErr = err;
+        }
+      }
+      if (!created) throw lastErr ?? new Error('Не вдалося ініціалізувати сегментер.');
+      segmenter = created;
+      setStatus('Модель завантажено. Увімкни камеру.');
+    }
+
+    // Увімкнення/вимкнення камери
+    async function toggleCamera(){
+      if (running){
+        stopCamera();
+        return;
+      }
+      try{
+        setStatus('Запит доступу до камери…');
+        stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+        video.srcObject = stream;
+        await video.play();
+
+        // Після metadata маємо розміри
+        await new Promise(res => {
+          if (video.readyState >= 1) return res();
+          video.onloadedmetadata = () => res();
+        });
+
+        resizeCanvases(video.videoWidth, video.videoHeight);
+        running = true;
+        btn.textContent = 'Вимкнути камеру';
+        snapshotBtn.disabled = false;
+        setStatus('Камера увімкнена. Запуск обробки…');
+        loop();
+      }catch(err){
+        console.error(err);
+        setStatus('Помилка доступу до камери: ' + (err.message || err));
+      }
+    }
+
+    function stopCamera(){
+      running = false;
+      snapshotBtn.disabled = true;
+      btn.textContent = 'Увімкнути камеру';
+      setStatus('Камеру вимкнено.');
+      if (stream){
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+      }
+      ctx.clearRect(0,0,canvas.width, canvas.height);
+    }
+
+    // Головний рендер-цикл
+    function loop(){
+      if (!running) return;
+      const t = performance.now();
+
+      // Малюємо відео (з дзеркалом за потреби)
+      ctx.save();
+      if (mirrored){
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.restore();
+
+      if (segmenter){
+        // Запит сегментації для кадру
+        const result = segmenter.segmentForVideo(video, t);
+        // HairSegmenter: 0 — фон, 1 — волосся (див. Models у документації)
+        // https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter/index
+        const cat = result.categoryMask;
+        const { width: mw, height: mh } = cat;
+
+        if (maskCanvas.width !== mw || maskCanvas.height !== mh){
+          maskCanvas.width = mw; maskCanvas.height = mh;
+          tintCanvas.width = canvas.width; tintCanvas.height = canvas.height;
+        }
+
+        // Побудова альфа-маски (alpha тільки для категорії 1 — hair)
+        const cats = cat.getAsUint8Array();
+        const maskImg = maskCtx.createImageData(mw, mh);
+        const alphaScale = clamp(parseFloat(strengthInput.value || '0.85'), 0, 1) * 255;
+        for (let i=0, p=0; i<cats.length; i++, p+=4){
+          const isHair = cats[i] === 1;
+          maskImg.data[p]   = 255;
+          maskImg.data[p+1] = 255;
+          maskImg.data[p+2] = 255;
+          maskImg.data[p+3] = isHair ? alphaScale : 0;
+        }
+        maskCtx.clearRect(0,0,mw,mh);
+        maskCtx.putImageData(maskImg, 0, 0);
+
+        // Тінт-слой
+        const { r, g, b } = hexToRGB(colorInput.value);
+        const blurPx = parseInt(blurInput.value || '0', 10);
+
+        tintCtx.setTransform(1,0,0,1,0,0);
+        tintCtx.globalCompositeOperation = 'source-over';
+        tintCtx.globalAlpha = 1;
+        tintCtx.clearRect(0,0,tintCanvas.width, tintCanvas.height);
+
+        // 1) заливка кольором
+        tintCtx.fillStyle = `rgb(${r},${g},${b})`;
+        tintCtx.fillRect(0,0,tintCanvas.width, tintCanvas.height);
+
+        // 2) обрізання маскою (можна з розмиттям)
+        tintCtx.globalCompositeOperation = 'destination-in';
+        tintCtx.filter = blurPx > 0 ? `blur(${blurPx}px)` : 'none';
+
+        tintCtx.save();
+        if (mirrored){
+          tintCtx.translate(tintCanvas.width, 0);
+          tintCtx.scale(-1, 1);
+        }
+        tintCtx.drawImage(maskCanvas, 0, 0, tintCanvas.width, tintCanvas.height);
+        tintCtx.restore();
+        tintCtx.filter = 'none';
+
+        // 3) Змішування з вихідним кадром
+        ctx.save();
+        ctx.globalAlpha = clamp(parseFloat(strengthInput.value || '0.85'), 0, 1);
+        ctx.globalCompositeOperation = blendSelect.value; 
+        ctx.drawImage(tintCanvas, 0, 0);
+        ctx.restore();
+
+        // FPS
+        frames++;
+        if (t - lastT >= 1000){
+          fpsBadge.textContent = `FPS: ${frames}`;
+          frames = 0;
+          lastT = t;
+        }
+      }
+
+      requestAnimationFrame(loop);
+    }
+
+    // ===== Події UI
+    strengthInput.addEventListener('input', () => {
+      strengthVal.textContent = Number(strengthInput.value).toFixed(2);
+    });
+    blurInput.addEventListener('input', () => {
+      blurVal.textContent = `${parseInt(blurInput.value,10)} px`;
+    });
+    btn.addEventListener('click', toggleCamera);
+    flipBtn.addEventListener('click', () => { mirrored = !mirrored; });
+
+    snapshotBtn.addEventListener('click', () => {
+      const a = document.createElement('a');
+      a.download = `hair-color-${Date.now()}.png`;
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    });
+
+    // ===== Ініціалізація
+    (async () => {
+      if (!('mediaDevices' in navigator)) {
+        setStatus('Цей браузер не підтримує getUserMedia.');
+        btn.disabled = true;
+        return;
+      }
+      try{
+        await initSegmenter();
+      }catch(err){
+        console.error(err);
+        setStatus('Помилка ініціалізації: ' + (err.message || err));
+        btn.disabled = true;
+      }
+    })();
+
+    window.addEventListener('resize', () => {
+      if (video.videoWidth && video.videoHeight){
+        resizeCanvases(video.videoWidth, video.videoHeight);
+      }
+    });
+  </script>
+</body>
+</html>
